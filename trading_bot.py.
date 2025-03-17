@@ -1,130 +1,115 @@
-import requests
-import time
-import datetime
-import pytz
 import numpy as np
-from sklearn.linear_model import LinearRegression
+import pandas as pd
+import ta  # Technical indicators
+import xgboost as xgb
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from sklearn.model_selection import train_test_split
+from transformers import pipeline
+import websocket
+import gym
+from stable_baselines3 import PPO
 
-# API keys (Replace with your valid keys)
-EXCHANGE_RATE_API_KEY = "your_exchange_rate_api_key"
-COINMARKETCAP_API_KEY = "your_coinmarketcap_api_key"
+# ==========================
+# 1️⃣ Load & Preprocess Market Data
+# ==========================
+df = pd.read_csv("market_data.csv")  # Replace with actual data source
 
-# Function to test API connectivity
-def test_api(url):
-    try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"❌ API Error: {e}")
-        return False
+# Compute technical indicators
+df['RSI'] = ta.momentum.RSIIndicator(df['close']).rsi()
+df['MACD'] = ta.trend.MACD(df['close']).macd()
+df['Bollinger_High'] = ta.volatility.BollingerBands(df['close']).bollinger_hband()
+df['Bollinger_Low'] = ta.volatility.BollingerBands(df['close']).bollinger_lband()
 
-# Fetch all cryptocurrencies from CoinGecko
-def get_all_cryptos():
-    url = "https://api.coingecko.com/api/v3/coins/list"
-    
-    if not test_api(url):
-        return []
+# Enhanced feature engineering from Step 3
+df['EMA'] = ta.trend.EMAIndicator(df['close']).ema_indicator()
+df['Stochastic_Oscillator'] = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close']).stoch()
 
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        return [crypto['id'] for crypto in data]
-    except requests.exceptions.RequestException as e:
-        return f"Error: {e}"
+# Prepare training data
+X = df[['open', 'high', 'low', 'close', 'volume', 'RSI', 'MACD', 'Bollinger_High', 'Bollinger_Low', 'EMA', 'Stochastic_Oscillator']].values
+y = df['future_price'].values  # Define the correct target variable
 
-# Function to fetch cryptocurrency prices
-def get_crypto_price(crypto):
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={crypto}&vs_currencies=usd"
-    
-    if not test_api(url):
-        return "API Unreachable"
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-    try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        return data.get(crypto, {}).get('usd', 'N/A')
-    except requests.exceptions.RequestException as e:
-        return f"Error: {e}"
+# ==========================
+# 2️⃣ Build & Train LSTM Model
+# ==========================
+lstm_model = Sequential([
+        LSTM(64, return_sequences=True, input_shape=(X_train.shape[1], 1)),  # Step 2: Increased neurons
+            Dropout(0.2),  # Step 2: Added dropout for regularization
+                LSTM(64),
+                    Dropout(0.2),
+                        Dense(1, activation='linear')
+])
+lstm_model.compile(optimizer='adam', loss='mse')
+lstm_model.fit(X_train, y_train, epochs=100, batch_size=32)  # Step 2: Increased epochs
 
-# Fetch all Forex pairs dynamically (Example base currencies)
-FOREX_BASE_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]
-FOREX_TARGET_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD", "KES", "ZAR"]
+# ==========================
+# 3️⃣ Train XGBoost Model for Short-Term Predictions
+# ==========================
+xgb_model = xgb.XGBRegressor(n_estimators=300, max_depth=6, learning_rate=0.05)  # Step 2: Optimized hyperparameters
+xgb_model.fit(X_train, y_train)
 
-def get_forex_price(base_currency, target_currency):
-    url = f"https://v6.exchangerate-api.com/v6/{EXCHANGE_RATE_API_KEY}/pair/{base_currency}/{target_currency}"
-    
-    if not test_api(url):
-        return "API Unreachable"
+# ==========================
+# 4️⃣ Sentiment Analysis from News
+# ==========================
+sentiment_analyzer = pipeline("sentiment-analysis")
 
-    try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("conversion_rate", "N/A")
-    except requests.exceptions.RequestException as e:
-        return f"Error: {e}"
+def analyze_sentiment(news_text):
+    sentiment = sentiment_analyzer(news_text)
+        return sentiment[0]['label']
 
-# AI Model to predict market trends using Linear Regression
-class TradingAI:
-    def __init__(self):
-        self.model = LinearRegression()
-        self.data = []  # Stores past price movements
-    
-    def train(self, prices):
-        if len(prices) < 10:
-            return "Not enough data to train."
-        
-        X = np.array(range(len(prices))).reshape(-1, 1)
-        y = np.array(prices)
-        self.model.fit(X, y)
-    
-    def predict(self):
-        if len(self.data) < 10:
-            return "Insufficient data for prediction"
-        
-        future_x = np.array([[len(self.data)]])
-        return self.model.predict(future_x)[0]
+        news_text = "Federal Reserve announces interest rate hike"  # Replace with live news input
+        market_sentiment = analyze_sentiment(news_text)
 
-# Get best trading time based on time zone
-def get_best_trading_time(timezone):
-    now = datetime.datetime.now(pytz.timezone(timezone))
-    if now.hour < 6:
-        return "Best time to trade: 6 AM - 12 PM"
-    elif now.hour < 12:
-        return "Best time to trade: 12 PM - 6 PM"
-    elif now.hour < 18:
-        return "Best time to trade: 6 PM - 12 AM"
-    else:
-        return "Best time to trade: 12 AM - 6 AM"
+        # ==========================
+        # 5️⃣ Reinforcement Learning (RL) for Trade Decisions
+        # ==========================
+        env = gym.make("StockTrading-v0")  # Ensure compatible environment
+        rl_model = PPO("MlpPolicy", env, verbose=1)
+        rl_model.learn(total_timesteps=150000)  # Step 3: Increased training steps
 
-# Initialize AI and get all assets
-trading_ai = TradingAI()
-all_cryptos = get_all_cryptos()
-forex_pairs = [(base, target) for base in FOREX_BASE_CURRENCIES for target in FOREX_TARGET_CURRENCIES if base != target]
+        def get_rl_trade_decision():
+            obs = env.reset()
+                action, _ = rl_model.predict(obs)
+                    return action
 
-# Fetch Cryptocurrency Prices and Train AI
-print("\n=== Cryptocurrency Market ===")
-for crypto in all_cryptos[:20]:  # Limiting to top 20 for performance
-    price = get_crypto_price(crypto)
-    print(f"{crypto.capitalize()}: ${price}")
+                    # ==========================
+                    # 6️⃣ Real-Time Market Data with WebSockets
+                    # ==========================
+                    def on_message(ws, message):
+                        print(f"Real-time data received: {message}")
 
-# Fetch Forex Rates
-print("\n=== Forex Market ===")
-for base, target in forex_pairs[:20]:  # Limiting to top 20 for performance
-    rate = get_forex_price(base, target)
-    print(f"{base}/{target}: {rate}")
+                        ws = websocket.WebSocketApp("wss://real-time-data-url", on_message=on_message)
+                        ws.run_forever()
 
-# AI Prediction
-print("\n=== AI Trading Predictions ===")
-predicted_price = trading_ai.predict()
-if isinstance(predicted_price, str):
-    print(predicted_price)
-else:
-    print(f"AI Prediction: ${predicted_price:.2f}")
+                        # ==========================
+                        # 7️⃣ Risk Management - Adaptive Stop-Loss & Take-Profit
+                        # ==========================
+                        def calculate_risk_management(current_price, volatility):
+                            stop_loss = current_price * (1 - 0.02 * volatility)  # Adaptive stop-loss
+                                take_profit = current_price * (1 + 0.03 * volatility)  # Adaptive take-profit
+                                    return stop_loss, take_profit
 
-# Get best trading time based on user timezone
-user_timezone = "America/New_York"  # Change based on user location
-print(f"\n⏰ {get_best_trading_time(user_timezone)}")
+                                    # ==========================
+                                    # 8️⃣ Final Prediction & Trade Execution
+                                    # ==========================
+                                    def make_prediction(X_test):
+                                        lstm_pred = lstm_model.predict(X_test)
+                                            xgb_pred = xgb_model.predict(X_test)
+                                                final_prediction = (0.7 * lstm_pred) + (0.3 * xgb_pred)
+                                                    return final_prediction
+
+                                                    # Sample trading execution
+                                                    current_price = 1000  # Example price
+                                                    market_volatility = 0.5  # Step 3: Used for adaptive risk management
+                                                    predicted_price = make_prediction(X_test)
+                                                    stop_loss, take_profit = calculate_risk_management(current_price, market_volatility)
+
+                                                    trade_decision = get_rl_trade_decision()
+
+                                                    print(f"Predicted Price: {predicted_price}")
+                                                    print(f"Stop-Loss: {stop_loss}, Take-Profit: {take_profit}")
+                                                    print(f"Trade Decision: {trade_decision}")
+])
