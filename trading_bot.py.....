@@ -1,0 +1,158 @@
+import os
+import threading
+import numpy as np
+import pandas as pd
+import ta  # Technical indicators
+import xgboost as xgb
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from sklearn.model_selection import train_test_split
+from transformers import pipeline
+import websocket
+import gym
+from stable_baselines3 import PPO
+from flask import Flask, jsonify
+
+# ==========================
+# 1️⃣ Load & Preprocess Market Data
+# ==========================
+df = pd.read_csv("market_data.csv")  # Ensure the file exists or replace with actual data source
+
+# Compute technical indicators
+df['RSI'] = ta.momentum.RSIIndicator(df['close']).rsi()
+df['MACD'] = ta.trend.MACD(df['close']).macd()
+df['Bollinger_High'] = ta.volatility.BollingerBands(df['close']).bollinger_hband()
+df['Bollinger_Low'] = ta.volatility.BollingerBands(df['close']).bollinger_lband()
+df['EMA'] = ta.trend.EMAIndicator(df['close']).ema_indicator()
+df['Stochastic_Oscillator'] = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close']).stoch()
+
+# Prepare training data
+X = df[['open', 'high', 'low', 'close', 'volume', 'RSI', 'MACD', 'Bollinger_High', 'Bollinger_Low', 'EMA', 'Stochastic_Oscillator']].values
+y = df['future_price'].values  # Ensure 'future_price' exists in the dataset
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+# ==========================
+# 2️⃣ Build & Train LSTM Model
+# ==========================
+lstm_model = Sequential([
+        LSTM(64, return_sequences=True, input_shape=(X_train.shape[1], 1)),
+            Dropout(0.2),
+                LSTM(64),
+                    Dropout(0.2),
+                        Dense(1, activation='linear')
+])
+lstm_model.compile(optimizer='adam', loss='mse')
+lstm_model.fit(X_train, y_train, epochs=100, batch_size=32)
+
+# ==========================
+# 3️⃣ Train XGBoost Model for Short-Term Predictions
+# ==========================
+xgb_model = xgb.XGBRegressor(n_estimators=300, max_depth=6, learning_rate=0.05)
+xgb_model.fit(X_train, y_train)
+
+# ==========================
+# 4️⃣ Sentiment Analysis from News
+# ==========================
+sentiment_analyzer = pipeline("sentiment-analysis")
+
+def analyze_sentiment(news_text):
+    sentiment = sentiment_analyzer(news_text)
+        return sentiment[0]['label']
+
+        # ==========================
+        # 5️⃣ Reinforcement Learning (RL) for Trade Decisions
+        # ==========================
+        env = gym.make("StockTrading-v0")  # Ensure compatible environment
+        rl_model = PPO("MlpPolicy", env, verbose=1)
+        rl_model.learn(total_timesteps=150000)
+
+        def get_rl_trade_decision():
+            obs = env.reset()
+                action, _ = rl_model.predict(obs)
+                    return action
+
+                    # ==========================
+                    # 6️⃣ Real-Time Market Data with WebSockets
+                    # ==========================
+                    def on_message(ws, message):
+                        print(f"Real-time data received: {message}")
+
+                        ws = websocket.WebSocketApp("wss://real-time-data-url", on_message=on_message)
+
+                        def run_websocket():
+                            ws.run_forever()
+
+                            # ==========================
+                            # 7️⃣ Risk Management - Adaptive Stop-Loss & Take-Profit
+                            # ==========================
+                            def calculate_risk_management(current_price, volatility):
+                                stop_loss = current_price * (1 - 0.02 * volatility)
+                                    take_profit = current_price * (1 + 0.03 * volatility)
+                                        return stop_loss, take_profit
+
+                                        # ==========================
+                                        # 8️⃣ Final Prediction & Trade Execution
+                                        # ==========================
+                                        def make_prediction(X_test):
+                                            lstm_pred = lstm_model.predict(X_test)
+                                                xgb_pred = xgb_model.predict(X_test)
+                                                    final_prediction = (0.7 * lstm_pred) + (0.3 * xgb_pred)
+                                                        return final_prediction
+
+                                                        def run_trading_bot():
+                                                            print("Trading bot started...")
+
+                                                                # Example trade execution
+                                                                    current_price = 1000
+                                                                        market_volatility = 0.5
+                                                                            predicted_price = make_prediction(X_test)
+                                                                                stop_loss, take_profit = calculate_risk_management(current_price, market_volatility)
+
+                                                                                    trade_decision = get_rl_trade_decision()
+
+                                                                                        print(f"Predicted Price: {predicted_price}")
+                                                                                            print(f"Stop-Loss: {stop_loss}, Take-Profit: {take_profit}")
+                                                                                                print(f"Trade Decision: {trade_decision}")
+
+                                                                                                # ==========================
+                                                                                                # 🌍 9️⃣ Flask API for Render Deployment (Port Fix)
+                                                                                                # ==========================
+                                                                                                app = Flask(__name__)
+
+                                                                                                @app.route("/")
+                                                                                                def home():
+                                                                                                    return jsonify({"message": "Trading bot is running and accessible!"})
+
+                                                                                                    @app.route("/predict", methods=["GET"])
+                                                                                                    def get_prediction():
+                                                                                                        prediction = make_prediction(X_test[:1])  # Example using first test sample
+                                                                                                            return jsonify({"prediction": prediction.tolist()})
+
+                                                                                                            @app.route("/trade-decision", methods=["GET"])
+                                                                                                            def trade_decision():
+                                                                                                                decision = get_rl_trade_decision()
+                                                                                                                    return jsonify({"trade_decision": int(decision)})
+
+                                                                                                                    @app.route("/sentiment", methods=["POST"])
+                                                                                                                    def sentiment():
+                                                                                                                        data = request.get_json()
+                                                                                                                            if "text" not in data:
+                                                                                                                                    return jsonify({"error": "No text provided"}), 400
+                                                                                                                                        sentiment_result = analyze_sentiment(data["text"])
+                                                                                                                                            return jsonify({"sentiment": sentiment_result})
+
+                                                                                                                                            # ==========================
+                                                                                                                                            # 🏃 Start the Bot & Flask Server Correctly
+                                                                                                                                            # ==========================
+                                                                                                                                            if __name__ == "__main__":
+                                                                                                                                                bot_thread = threading.Thread(target=run_trading_bot, daemon=True)
+                                                                                                                                                    websocket_thread = threading.Thread(target=run_websocket, daemon=True)
+
+                                                                                                                                                        bot_thread.start()
+                                                                                                                                                            websocket_thread.start()
+
+                                                                                                                                                                port = int(os.getenv("PORT", 5000))  # Render requires a port binding
+                                                                                                                                                                    app.run(host="0.0.0.0", port=port)
+])
