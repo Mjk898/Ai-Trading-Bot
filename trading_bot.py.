@@ -109,7 +109,23 @@ def analyze_sentiment(news_text):
 
                                                     trade_decision = get_rl_trade_decision()
 
-                                                    print(f"Predicted Price: {predicted_price}")
+       import os
+       from flask import Flask, jsonify
+       
+       app = Flask(__name__)
+       
+       @app.route("/")
+       def home():
+           return "Trading bot is running and accessible!"
+           
+           @app.route("/predict")
+           def predict():
+               predicted_price = make_prediction(X_test)
+                   return jsonify({"Predicted Price": predicted_price.tolist()})  # Convert NumPy array to list
+                   
+                   if __name__ == "__main__":
+                       port = int(os.getenv("PORT", 8080))  # Get port from Render
+                           app.run(host="0.0.0.0", port=port)                                             print(f"Predicted Price: {predicted_price}")
                                                     print(f"Stop-Loss: {stop_loss}, Take-Profit: {take_profit}")
                                                     print(f"Trade Decision: {trade_decision}")
 ])
