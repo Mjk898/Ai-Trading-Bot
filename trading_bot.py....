@@ -95,11 +95,11 @@ def calculate_risk_management(current_price, volatility):
 # ==========================
 # 8️⃣ Final Prediction & Trade Execution
 # ==========================
-def make_prediction(X_test):
+def make_prediction():
     lstm_pred = lstm_model.predict(X_test)
     xgb_pred = xgb_model.predict(X_test)
     final_prediction = (0.7 * lstm_pred) + (0.3 * xgb_pred)
-    return final_prediction
+    return final_prediction.tolist()
 
 def run_trading_bot():
     print("Trading bot started...")
@@ -107,7 +107,7 @@ def run_trading_bot():
     # Example trade execution
     current_price = 1000
     market_volatility = 0.5
-    predicted_price = make_prediction(X_test)
+    predicted_price = make_prediction()
     stop_loss, take_profit = calculate_risk_management(current_price, market_volatility)
 
     trade_decision = get_rl_trade_decision()
@@ -125,13 +125,22 @@ app = Flask(__name__)
 def home():
     return jsonify({"message": "Trading bot is running and accessible!"})
 
-# Start bot and Flask server in parallel
-if __name__ == "__main__":
+@app.route("/predict")
+def predict():
+    prediction = make_prediction()
+    return jsonify({"predicted_price": prediction})
+
+@app.route("/start-bot")
+def start_bot():
     bot_thread = threading.Thread(target=run_trading_bot)
     websocket_thread = threading.Thread(target=run_websocket)
 
     bot_thread.start()
     websocket_thread.start()
 
-    port = int(os.getenv("PORT", 10000))  # Render requires a port binding
+    return jsonify({"message": "Trading bot started successfully!"})
+
+# Run Flask Web Server
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))  # Use default 5000 if PORT not set
     app.run(host="0.0.0.0", port=port)
