@@ -12,7 +12,7 @@ from transformers import pipeline
 import websocket
 import gym
 from stable_baselines3 import PPO
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 # ==========================
 # 1️⃣ Load & Preprocess Market Data
@@ -153,6 +153,6 @@ def analyze_sentiment(news_text):
                                                                                                                                                         bot_thread.start()
                                                                                                                                                             websocket_thread.start()
 
-                                                                                                                                                                port = int(os.getenv("PORT", 5000))  # Render requires a port binding
+                                                                                                                                                                port = int(os.getenv("PORT", 10000))  # Render requires a port binding
                                                                                                                                                                     app.run(host="0.0.0.0", port=port)
 ])
